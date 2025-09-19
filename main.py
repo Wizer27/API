@@ -1,0 +1,607 @@
+from fastapi import FastAPI, HTTPException, status
+from pydantic import BaseModel, Field
+import json
+import threading
+import socket
+from typing import Union, Literal, List, Optional
+import random
+from pydantic.types import StrictStr
+from pydantic_core.core_schema import str_schema
+import uuid
+import os
+
+app = FastAPI()
+
+# Базовые пути к файлам
+VIDEOS_FILE = "videos.json"
+POSTS_FILE = "posts.json"
+LIKED_POSTS_FILE = "liked_posts.json"
+USERS_FILE = "users.json"
+SUBS_FILE = "subs.json"
+LIKES_FILE = "likes.json"
+
+@app.get("/")
+async def main():
+    return "Alexandria videos API"
+
+
+def contains_username(username: str) -> bool:
+    with open(VIDEOS_FILE, "r") as file:
+        data = json.load(file)
+
+    for user in data:
+        if user["username"] == username:
+            return True
+
+    return False
+
+
+def has_key(key: str, data) -> bool:
+    return key in data
+
+def write_def_postst(username: str) -> bool:
+    with open(POSTS_FILE, "r") as file:
+        main = json.load(file)
+
+    for user in main:
+        if user["username"] == username:
+            print("Here 1")
+            return False
+    main.append({
+        "username": username,
+        "posts": []
+    })
+    with open(POSTS_FILE, "w") as file:
+        json.dump(main, file, indent=2)
+
+    return True
+
+def fix_enumaration(username: str, title: str, code: str):
+    with open(VIDEOS_FILE, "r") as file:
+        data = json.load(file)
+    ok = False
+    if contains_username(data):
+        for user in data:
+            if has_key(title, user["videos"]):
+                user["videos"][title + "1"] = code
+                ok = True
+            else:
+                print("Key doest exist")
+    else:
+        print("Unvalid username")
+
+    if ok:
+        with open(VIDEOS_FILE, "w") as file:
+            json.dump(data, file, indent=2)
+    else:
+        print("Error")
+
+
+def base_videos_data(username: str) -> bool:
+    with open(VIDEOS_FILE, "r") as file:
+        data = json.load(file)
+
+    if not contains_username(username):
+        data.append({
+            "username": username,
+            "videos": {}
+        })
+        with open(VIDEOS_FILE, "w") as file:
+            json.dump(data, file, indent=2)
+            return True
+    else:
+        print("User already exists")
+        return False
+
+
+class Username(BaseModel):
+    username: str
+
+
+@app.post("/load/default/videos")
+async def load_def(request: Username):
+    if base_videos_data(request.username):
+        return "OK"
+    raise HTTPException(status_code=404, detail="User already exists")
+
+
+class JsonDataUser(BaseModel):
+    username: str
+    code: str
+    title: str
+
+@app.post("/write/video/user")
+async def write_video_to_user(request: JsonDataUser):
+    with open(VIDEOS_FILE, "r") as file:
+        data = json.load(file)
+    for user in data:
+        if user["username"] == request.username:
+            try:
+                user["videos"][request.title] = request.code
+            except Exception as e:
+                print(f"Expceptin : {e}")
+    with open(VIDEOS_FILE, "w") as file:
+        json.dump(data, file, indent=2)
+        print("Success")
+
+class Request_Video_Data(BaseModel):
+    username: str
+    title: str
+
+
+@app.post("/get/video")
+async def get_video(request: Request_Video_Data):
+    with open(VIDEOS_FILE, "r") as file:
+        data = json.load(file)
+
+    for user in data:
+        if user["username"] == request.username:
+            if has_key(request.title, user["videos"]):
+                return user["videos"][request.title]
+            else:
+                return "No such title"
+    return "No such user"
+
+
+class DeleteVideo(BaseModel):
+    username: str
+    title: str
+
+@app.post("/delete/video")
+async def delete_video(request: DeleteVideo):
+    with open(VIDEOS_FILE, "r") as file:
+        data = json.load(file)
+    global ex
+    ex = False
+    for user in data:
+        if user["username"] == request.username:
+            if has_key(request.title, user["videos"]):
+                del user["videos"][request.title]
+                ex = True
+            else:
+                raise HTTPException(status_code=400, detail="Video not found")
+    if ex:
+        with open(VIDEOS_FILE, "w") as file:
+            json.dump(data, file, indent=2)
+
+
+class LikedPost(BaseModel):
+    username: str
+    author: str
+    title: str
+    post: str
+
+@app.post("/liked/posts")
+async def write_liked_post(request: LikedPost):
+    with open(LIKED_POSTS_FILE, "r") as file:
+        data = json.load(file)
+    ok = False
+    for user in data:
+        if user["username"] == request.username:
+            user["posts"].append({
+                "author": request.author,
+                "title": request.title,
+                "post": request.post
+            })
+            ok = True
+    if ok:
+        with open(LIKED_POSTS_FILE, "w") as file:
+            json.dump(data, file, indent=2)
+    else:
+        raise HTTPException(status_code=400, detail="user not found")
+
+
+class DefRequestLiked(BaseModel):
+    username: str
+
+@app.post("/liked/default")
+async def write_def(request: DefRequestLiked):
+    with open(LIKED_POSTS_FILE, "r") as file:
+        data = json.load(file)
+    for user in data:
+        if user["username"] == request.username:
+            raise HTTPException(status_code=400, detail="User alredy exists")
+
+    data.append(
+        {
+            "username": request.username,
+            "posts": []
+        }
+    )
+    with open(LIKED_POSTS_FILE, "w") as file:
+        json.dump(data, file, indent=2)
+
+class DeleteRequest(BaseModel):
+    username: str
+    author: str
+    title: str
+    post: str
+
+@app.post("/liked/delete")
+async def delte_post_from_liked(request: DeleteRequest):
+    with open(LIKED_POSTS_FILE, "r") as file:
+        data = json.load(file)
+    global ok
+    ok = False
+    for user in data:
+        if user["username"] == request.username:
+            for post in user["posts"]:
+                if post["title"] == request.title and post["author"] == request.author and post["post"] == request.post:
+                    index = user["posts"].index(post)
+                    user["posts"].pop(index)
+                    ok = True
+    if ok:
+        with open(LIKED_POSTS_FILE, "w") as file:
+            json.dump(data, file, indent=2)
+    else:
+        raise HTTPException(status_code=400, detail="User not found")
+
+class ShowLiked(BaseModel):
+    username: str
+
+@app.post("/get/liked")
+async def get_liked(request: ShowLiked):
+    with open(POSTS_FILE, "r") as file:
+        data = json.load(file)
+    liked = []    
+    for user in data:
+        for post in user["posts"]:
+            if request.username in post["likes"]:
+                liked.append(post)
+    return liked           
+
+
+class Register(BaseModel):
+    username: str
+    hash_psw: str
+
+@app.post("/register")
+async def register(request: Register):
+    with open(USERS_FILE, "r") as file:
+        data = json.load(file)
+
+    with open(SUBS_FILE, "r") as file:
+        subs = json.load(file)
+
+    if not has_key(request.username, data):
+        data[request.username] = request.hash_psw
+        with open(USERS_FILE, "w") as file:
+            json.dump(data, file, indent=2)
+    else:
+        raise HTTPException(status_code=400, detail="User alredy exist")
+
+    if request.username in subs:
+        raise HTTPException(status_code=400, detail="Eror with the subs")
+    else:
+        subs[request.username] = []
+        with open(SUBS_FILE, "w") as file:
+            json.dump(subs, file, indent=2)
+
+@app.post("/login")
+async def login(request: Register):
+    with open(USERS_FILE, "r") as file:
+        data = json.load(file)
+    if has_key(request.username, data):
+        if data[request.username] == request.hash_psw:
+            return True
+        else:
+            raise HTTPException(status_code=400, detail="Wrong password")
+    else:
+        raise HTTPException(status_code=404, detail="User not found")
+
+class Write_Default_Posts(BaseModel):
+    username: str
+
+@app.post("/write_default/posts")
+async def write_default_posts(request: Write_Default_Posts):
+    username = request.username
+    if write_def_postst(username):
+        return True
+    raise HTTPException(status_code=400, detail="Something went wrong")
+
+
+class Post(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    author: str
+    title: str
+    content: str
+
+class VideoPost(Post):
+    type: Literal["video"] = "video"
+    video: str
+
+class PhotoPost(Post):
+    type: Literal["photo"] = "photo"
+    photo: str
+
+posts = Union[VideoPost, PhotoPost, Post]
+
+@app.post("/write/post")
+async def write_post_to_user(request: posts):
+    with open(POSTS_FILE, "r") as file:
+        data = json.load(file)
+
+    base = {
+        "author": request.author,
+        "title": request.title,
+        "content": request.content,
+        "id": str(uuid.uuid4()),
+        "type": "text",
+        "likes": [],
+        "dislikes": []
+    }
+    if isinstance(request, VideoPost):
+        base["video"] = request.video
+        base["type"] = "video"
+    elif isinstance(request, PhotoPost):
+        base["photo"] = request.photo
+        base["type"] = "photo"
+
+    user_ex = False
+    for user in data:
+        if user["username"] == request.author:
+            user_ex = True
+    if user_ex:
+        for user2 in data:
+            if user2["username"] == request.author:
+                user2["posts"].append(base)
+        with open(POSTS_FILE, "w") as file:
+            json.dump(data, file, indent=2)
+
+        with open(LIKES_FILE, "r") as file:
+            likes = json.load(file)
+
+        likes.append({
+            "author": request.author,
+            "titile": request.title,
+            "likes": [],
+            "dislikes": []
+        })
+        with open(LIKES_FILE, "w") as file:
+            json.dump(likes, file, indent=2)
+    else:
+        raise HTTPException(status_code=400, detail="User not found")
+
+
+class Delete_Post(BaseModel):
+    username: str
+    id: str
+
+@app.post("/delete/post")
+async def delete_post(request: Delete_Post):
+    with open(POSTS_FILE, "r") as file:
+        data = json.load(file)
+
+    user_ex = False
+    post_deleted = False
+    for i in data:
+        if i["username"] == request.username:
+            user_ex = True
+    if user_ex:
+        for user in data:
+            if user["username"] == request.username:
+                for post in user["posts"]:
+                    if post["id"] == request.id:
+                        index = user["posts"].index(post)
+                        user["posts"].pop(index)
+                        post_deleted = True 
+    
+    else:
+        raise HTTPException(status_code=400, detail="User not found")
+    if post_deleted:
+        with open(POSTS_FILE, "w") as file:
+            json.dump(data, file)
+    else:
+        raise HTTPException(status_code=400, detail="Something went wrong")
+
+class GetPosts(BaseModel):
+    username: str
+
+@app.post("/get/user/posts")
+async def get_user_posts(request: GetPosts):
+    with open(POSTS_FILE, "r") as file:
+        data = json.load(file)
+    for user in data:
+        if user["username"] == request.username:
+            return user["posts"]
+    raise HTTPException(status_code=404, detail="User not found")    
+        
+class Search(BaseModel):
+    search: str
+
+@app.post("/search")
+async def search(request: Search):
+    with open(POSTS_FILE, "r") as file:
+        data = json.load(file)
+    search_return = []    
+    for user in data:
+        for post in user["posts"]:
+            if (post["title"].lower() in request.search.lower() or request.search.lower() in post["title"].lower()) or (post["content"].lower() in request.search.lower() or request.search.lower() in post["content"].lower()):
+                search_return.append(post)
+    return search_return            
+
+
+class SudoLike(BaseModel):
+    username: str
+    author: str
+    id: str
+
+@app.post("/like/post")
+async def like_sudo_post(request: SudoLike):
+    with open(POSTS_FILE, "r") as file:
+        data = json.load(file)
+
+    user_ex = False
+    written = False
+
+    for i in data:
+        if i["username"] == request.author:
+            user_ex = True        
+    if user_ex:
+        for user in data:
+            if user["username"] == request.author:
+                for post in user["posts"]:
+                    if post["id"] == request.id:
+                        if request.username not in post["likes"] and request.username not in post["dislikes"]:
+                            post["likes"].append(request.username)
+                            written = True
+                        elif request.username not in post["likes"] and request.username in post["dislikes"]:
+                            index = post["dislikes"].index(request.username)
+                            post["dislikes"].pop(index)
+                            post["likes"].append(request.username)
+                            written = True
+                        elif request.username in post["likes"] and request.username not in post["dislikes"]:
+                            ind = post["likes"].index(request.username)
+                            post["likes"].pop(ind)
+                            written = True
+        if written:
+            with open(POSTS_FILE, "w") as file:
+                json.dump(data, file)                    
+    else:
+        raise HTTPException(status_code=404, detail="User not found")
+
+
+@app.post("/dislike/post")
+async def dislike_post(request: SudoLike):
+    with open(POSTS_FILE, "r") as file:
+        data = json.load(file)
+    user_ex = False
+    written = False
+
+    for i in data:
+        if i["username"] == request.author:
+            user_ex = True        
+    if user_ex:
+        for user in data:
+            if user["username"] == request.author:
+                for post in user["posts"]:
+                    if post["id"] == request.id:
+                        if request.username not in post["likes"] and request.username not in post["dislikes"]:
+                            post["dislikes"].append(request.username)
+                            written = True
+                        elif request.username not in post["likes"] and request.username in post["dislikes"]:
+                            index = post["dislikes"].index(request.username)
+                            post["dislikes"].pop(index)
+                            written = True
+                        elif request.username in post["likes"] and request.username not in post["dislikes"]:
+                            ind = post["likes"].index(request.username)
+                            post["likes"].pop(ind)
+                            post["dislikes"].append(request.username)
+                            written = True
+    if written:
+            with open(POSTS_FILE, "w") as file:
+                json.dump(data, file)                    
+    else:
+        raise HTTPException(status_code=404, detail="User not found")
+
+
+@app.get("/random/post")
+async def get_random_post():
+    with open(POSTS_FILE, "r") as file:
+        data = json.load(file)
+
+    random_posts = []
+    for user in data:
+        if len(user["posts"]) != 0:
+            random_posts.append(random.choice(user["posts"]))
+    return random_posts    
+            
+@app.post("/get/post/react")
+async def get_post_react(request: posts):
+    with open(POSTS_FILE, "r") as file:
+        data = json.load(file)
+    base_search = {
+        "author": request.author,
+        "title": request.title,
+        "content": request.content,
+        "type": "text"
+    }
+    if isinstance(request, VideoPost):
+        base_search["video"] = request.video
+        base_search["type"] = "video"
+    elif isinstance(request, PhotoPost):
+        base_search["photo"] = request.photo
+        base_search["type"] = "photo"
+
+    user_ex = False
+    for i in data:
+        if i["username"] == request.author:
+            user_ex = True
+    if user_ex:
+        for user in data:
+            if user["username"] == request.author:
+                for post in user["posts"]:
+                    if post["type"] == base_search["type"] == "text":
+                        if post["title"] == base_search["title"] and post["content"] == base_search["content"]:
+                            return post["likes"], post["dislikes"]
+                    elif post["type"] == base_search["type"] == "photo":
+                        if post["title"] == base_search["title"] and post["content"] == base_search["content"] and post["photo"] == base_search["photo"]:
+                           return post["likes"], post["dislikes"]  
+                    elif post["type"] == base_search["type"] == "video":
+                        if post["title"] == base_search["title"] and post["content"] == base_search["content"] and post["video"] == base_search["video"]:
+                            return post["likes"], post["dislikes"]  
+       
+        raise HTTPException(status_code=404, detail="Post not found")                                        
+    else:
+        raise HTTPException(status_code=404, detail="User not found")
+
+
+class Nano(BaseModel):
+    username: str
+    creator: str
+
+@app.post("/user/sub")
+async def sub(request: Nano):
+    with open(SUBS_FILE, "r") as file:
+        data = json.load(file)
+
+    if request.creator in data:
+        data[request.creator].append(request.username)
+    else:
+        raise HTTPException(status_code=400, detail="User not found")
+    with open(SUBS_FILE, "w") as file:
+        json.dump(data, file)
+
+class GetSubs(BaseModel):
+    username: str
+
+@app.post("/get/subs")
+async def get_subs(request: GetSubs):
+    username = request.username
+    with open(SUBS_FILE, "r") as file:
+        data = json.load(file)
+
+    if username in data:
+        return data[username]
+    else:
+        raise HTTPException(status_code=400, detail="User not found")
+
+@app.post("/subs/count")
+async def get_subs_count(request: GetSubs):
+    with open(SUBS_FILE, "r") as file:
+        data = json.load(file)
+    if request.username in data:
+        return len(data[request.username])
+    raise HTTPException(status_code=404, detail="User not found")
+
+
+@app.post("/user/issubed")
+async def is_subed(request: Nano):
+    with open(SUBS_FILE, "r") as file:
+        subs = json.load(file)
+    if request.creator in subs:
+        return request.username in subs[request.creator]
+    raise HTTPException(status_code=400, detail="User not found") 
+
+@app.post("/user/unsub")
+async def unsub(request: Nano):
+    with open(SUBS_FILE, "r") as file:
+        data = json.load(file)
+    if request.creator in data:
+        if request.username in data[request.creator]:
+            index = data[request.creator].index(request.username)
+            data[request.creator].pop(index)
+            with open(SUBS_FILE, "w") as file:
+                json.dump(data, file)  
+        else:
+            raise HTTPException(status_code=404, detail="User not found")        
